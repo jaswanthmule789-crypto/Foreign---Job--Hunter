@@ -49,7 +49,7 @@ def sync_greenhouse(board_token): return sync_jobs(greenhouse(board_token))
 @app.post("/api/sources/lever/{site}")
 def sync_lever(site,eu:bool=False): return sync_jobs(lever(site,eu))
 
-@@app.post("/api/cron/sync")
+@app.post("/api/cron/sync")
 def cron_sync(x_cron_secret: str = Header(default="")):
     if x_cron_secret != CRON_SECRET:
         raise HTTPException(401, "invalid cron secret")
