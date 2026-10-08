@@ -1,107 +1,234 @@
+# ============================================================
+# FOREIGN JOB HUNTER AI - V11 SAP MATCHER
+# ============================================================
+
+# ------------------------------------------------------------
+# CORE SAP SKILLS
+# ------------------------------------------------------------
+
 SKILLS = {
-    "SAP MM": ["sap mm", "materials management"],
-    "S/4HANA": ["s/4hana", "s4hana", "s/4 hana"],
-    "P2P": ["p2p", "procure-to-pay", "procure to pay"],
-    "Procurement": ["procurement", "purchasing", "purchase order"],
+    "SAP MM": [
+        "sap mm",
+        "sap materials management",
+        "materials management",
+    ],
+
+    "S/4HANA": [
+        "s/4hana",
+        "s4hana",
+        "s/4 hana",
+        "sap s/4",
+    ],
+
+    "P2P": [
+        "p2p",
+        "procure-to-pay",
+        "procure to pay",
+        "purchase-to-pay",
+    ],
+
+    "Procurement": [
+        "sap procurement",
+        "procurement",
+        "purchasing",
+        "purchase order",
+        "purchase orders",
+    ],
+
     "Inventory": [
         "inventory management",
+        "inventory",
         "goods receipt",
         "goods issue",
-        "warehouse"
+        "warehouse management",
     ],
-    "MRP": ["mrp", "material requirements planning"],
-    "Fiori": ["sap fiori", "fiori apps"],
-    "O365": ["o365", "office 365", "microsoft 365"],
+
+    "MRP": [
+        "mrp",
+        "material requirements planning",
+    ],
+
+    "Fiori": [
+        "sap fiori",
+        "fiori apps",
+        "fiori",
+    ],
+
+    "O365": [
+        "o365",
+        "office 365",
+        "microsoft 365",
+    ],
 }
+
+
+# ------------------------------------------------------------
+# SAP / RELEVANCE SIGNALS
+# ------------------------------------------------------------
+
+SAP_ANCHORS = [
+    "sap",
+    "s/4hana",
+    "s4hana",
+    "s/4 hana",
+    "materials management",
+]
+
+
+# ------------------------------------------------------------
+# RELEVANT SAP JOB TITLES
+# ------------------------------------------------------------
+
+ROLE_ANCHORS = [
+    "sap mm",
+    "sap consultant",
+    "sap functional",
+    "sap functional consultant",
+    "sap procurement",
+    "sap purchasing",
+    "sap materials",
+    "sap logistics",
+    "sap supply chain",
+    "sap s/4hana",
+    "s/4hana consultant",
+    "s4hana consultant",
+    "materials management consultant",
+    "materials management specialist",
+    "procurement consultant",
+    "procurement specialist",
+    "purchasing consultant",
+    "p2p consultant",
+    "p2p specialist",
+    "inventory consultant",
+    "inventory management consultant",
+    "sap wm",
+    "sap ewm",
+    "sap supply chain consultant",
+]
+
+
+# ------------------------------------------------------------
+# STRONG NEGATIVE / UNRELATED ROLES
+# ------------------------------------------------------------
+
+NEGATIVE_ROLES = [
+    "account executive",
+    "account manager",
+    "sales executive",
+    "sales manager",
+    "business development",
+    "business development manager",
+    "marketing",
+    "marketing manager",
+    "recruiter",
+    "recruitment",
+    "human resources",
+    "hr manager",
+    "financial analyst",
+    "finance manager",
+    "investment analyst",
+    "software engineer",
+    "software developer",
+    "frontend engineer",
+    "backend engineer",
+    "full stack engineer",
+    "data scientist",
+    "data analyst",
+    "machine learning engineer",
+    "ai engineer",
+    "artificial intelligence engineer",
+    "devops engineer",
+    "cloud engineer",
+    "cyber security",
+    "security engineer",
+    "product manager",
+    "product designer",
+    "ux designer",
+    "ui designer",
+    "graphic designer",
+    "customer success",
+    "customer support",
+]
+
+
+# ------------------------------------------------------------
+# VISA POSITIVE SIGNALS
+# ------------------------------------------------------------
 
 POS = [
     "visa sponsorship",
     "visa sponsor",
+    "visa sponsored",
     "sponsorship available",
     "sponsorship provided",
+    "sponsorship offered",
+    "visa sponsorship available",
+    "visa sponsorship provided",
     "work visa sponsorship",
+    "work visa sponsor",
     "work permit sponsorship",
+    "work permit sponsor",
+    "work permit support",
     "visa support",
+    "visa assistance",
+    "immigration support",
     "relocation and visa support",
+    "relocation visa support",
+    "relocation support and visa",
+    "sponsorship for international candidates",
+    "sponsor international candidates",
 ]
+
+
+# ------------------------------------------------------------
+# VISA NEGATIVE SIGNALS
+# ------------------------------------------------------------
 
 NEG = [
     "visa sponsorship is not available",
+    "visa sponsorship not available",
     "no visa sponsorship",
     "without visa sponsorship",
+    "sponsorship is not available",
+    "sponsorship not available",
+    "we do not sponsor",
+    "we don't sponsor",
+    "cannot provide sponsorship",
+    "unable to provide sponsorship",
     "must already have work authorization",
     "must have the right to work",
     "right to work in",
     "existing work authorization required",
+    "already authorized to work",
+    "authorized to work in",
+    "legally authorized to work",
 ]
 
 
-def score(job, candidate):
-    title = job.get("title", "")
-    description = job.get("description", "")
+# ============================================================
+# HELPER FUNCTIONS
+# ============================================================
 
-    t = (title + " " + description).lower()
-
-    hits = [
-        skill
-        for skill, phrases in SKILLS.items()
-        if any(phrase in t for phrase in phrases)
-    ]
-
-    skill_score = round(len(hits) / len(SKILLS) * 60)
-
-    experience_score = (
-        20 if candidate.experience_years >= 2 else 10
+def contains_any(text, phrases):
+    return any(
+        phrase in text
+        for phrase in phrases
     )
 
-    has_negative = any(x in t for x in NEG)
-    has_positive = any(x in t for x in POS)
 
-    if has_negative:
-        visa = "NO"
-    elif has_positive:
-        visa = "YES"
-    else:
-        visa = "UNKNOWN"
+def find_skill_hits(text):
 
-    country_text = (
-        (job.get("country") or "")
-        + " "
-        + (job.get("location") or "")
-    ).lower()
+    hits = []
 
-    country_score = 5 if any(
-        c.lower() in country_text
-        for c in candidate.countries
-    ) else 0
+    for skill, phrases in SKILLS.items():
 
-    visa_score = {
-        "YES": 15,
-        "UNKNOWN": 0,
-        "NO": 0
-    }[visa]
+        if contains_any(
+            text,
+            phrases,
+        ):
+            hits.append(skill)
 
-    total = min(
-        100,
-        skill_score
-        + experience_score
-        + visa_score
-        + country_score
-    )
+    return hits
 
-    # VISA SPONSORSHIP IS A HARD REQUIREMENT
-    if visa == "NO":
-        decision = "SKIP"
-    elif visa == "UNKNOWN":
-        decision = "SKIP"
-    elif total >= 70:
-        decision = "APPLY"
-    else:
-        decision = "REVIEW"
 
-    return {
-        "score": total,
-        "matched_skills": hits,
-        "visa_signal": visa,
-        "decision": decision,
-    }
+def is_s
