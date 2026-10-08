@@ -6,7 +6,7 @@ from .matcher import score
 from .db import conn
 from .auth import hash_password,verify_password,make_token,read_token
 from .documents import generate_cv,cover_letter
-from .config import CRON_SECRET
+from .config import CRON_SECRET, LEVER_SOURCES, GREENHOUSE_SOURCES
 from pathlib import Path
 import json,datetime,os
 
@@ -49,10 +49,51 @@ def sync_greenhouse(board_token): return sync_jobs(greenhouse(board_token))
 @app.post("/api/sources/lever/{site}")
 def sync_lever(site,eu:bool=False): return sync_jobs(lever(site,eu))
 
-@app.post("/api/cron/sync")
-def cron_sync(x_cron_secret:str=Header(default="")):
-    if x_cron_secret!=CRON_SECRET: raise HTTPException(401,"invalid cron secret")
-    return {"message":"Configure your permitted Greenhouse/Lever source list and call the source sync endpoints from your scheduler."}
+@@app.post("/api/cron/sync")
+def cron_sync(x_cron_secret: str = Header(default="")):
+    if x_cron_secret != CRON_SECRET:
+        raise HTTPException(401, "invalid cron secret")
+
+    results = []
+
+    for item in LEVER_SOURCES:
+        parts = item.split(":", 1)
+        site = parts[0]
+        eu = len(parts) > 1 and parts[1].lower() == "eu"
+
+        try:
+            result = sync_jobs(lever(site, eu))
+            results.append({
+                "source": "lever",
+                "site": site,
+                "result": result
+            })
+        except Exception as e:
+            results.append({
+                "source": "lever",
+                "site": site,
+                "error": str(e)
+            })
+
+    for token in GREENHOUSE_SOURCES:
+        try:
+            result = sync_jobs(greenhouse(token))
+            results.append({
+                "source": "greenhouse",
+                "board": token,
+                "result": result
+            })
+        except Exception as e:
+            results.append({
+                "source": "greenhouse",
+                "board": token,
+                "error": str(e)
+            })
+
+    return {
+        "sources_checked": len(results),
+        "results": results
+    }
 
 @app.get("/api/jobs")
 def jobs(min_score:int=0,country:str=""):
