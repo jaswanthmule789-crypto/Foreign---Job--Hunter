@@ -1,21 +1,49 @@
 from fastapi import FastAPI, HTTPException, Header
 from fastapi.responses import HTMLResponse, FileResponse
+
 from .models import Candidate, ApplicationCreate, StatusUpdate
-from .sources import greenhouse, lever
+
+from .sources import (
+    greenhouse,
+    lever,
+    arbeitnow,
+    remoteok,
+    normalize_jobs,
+)
+
 from .matcher import score
 from .db import conn
-from .auth import hash_password, verify_password, make_token
-from .documents import generate_cv, cover_letter
-from .config import CRON_SECRET, LEVER_SOURCES, GREENHOUSE_SOURCES
+
+from .auth import (
+    hash_password,
+    verify_password,
+    make_token,
+)
+
+from .documents import (
+    generate_cv,
+    cover_letter,
+)
+
+from .config import (
+    CRON_SECRET,
+    LEVER_SOURCES,
+    GREENHOUSE_SOURCES,
+    PUBLIC_JOB_SOURCES,
+)
 
 from pathlib import Path
 import json
 import datetime
 
 
+# ============================================================
+# APPLICATION
+# ============================================================
+
 app = FastAPI(
     title="Foreign Job Hunter AI",
-    version="Production"
+    version="V11 Multi-Portal",
 )
 
 CANDIDATE = Candidate()
@@ -27,14 +55,21 @@ CANDIDATE = Candidate()
 
 @app.get("/", response_class=HTMLResponse)
 def home():
-    index_file = Path(__file__).parent.parent / "index.html"
+
+    index_file = (
+        Path(__file__).parent.parent / "index.html"
+    )
 
     if not index_file.exists():
+
         return """
         <html>
+        <head>
+            <title>Foreign Job Hunter AI</title>
+        </head>
         <body>
-        <h1>Foreign Job Hunter AI</h1>
-        <p>Application is running.</p>
+            <h1>🤖 Foreign Job Hunter AI</h1>
+            <p>V11 Multi-Portal Engine is running.</p>
         </body>
         </html>
         """
@@ -47,35 +82,48 @@ def home():
 # ============================================================
 
 @app.post("/api/auth/register")
-def register(email: str, password: str):
+def register(
+    email: str,
+    password: str,
+):
 
     c = conn()
 
     try:
+
         c.execute(
             """
             INSERT INTO users
-            (email, password_hash, created_at)
+            (
+                email,
+                password_hash,
+                created_at
+            )
             VALUES (?, ?, ?)
             """,
             (
                 email,
                 hash_password(password),
-                datetime.datetime.utcnow().isoformat()
-            )
+                datetime.datetime.utcnow().isoformat(),
+            ),
         )
 
         c.commit()
 
     except Exception:
+
         raise HTTPException(
             status_code=409,
-            detail="email already registered"
+            detail="email already registered",
         )
 
     user = c.execute(
-        "SELECT id FROM users WHERE email=?",
-        (email,)
+        """
+        SELECT id
+        FROM users
+        WHERE email=?
+        """,
+        (email,),
     ).fetchone()
 
     return {
@@ -84,28 +132,37 @@ def register(email: str, password: str):
 
 
 @app.post("/api/auth/login")
-def login(email: str, password: str):
+def login(
+    email: str,
+    password: str,
+):
 
     c = conn()
 
     user = c.execute(
-        "SELECT * FROM users WHERE email=?",
-        (email,)
+        """
+        SELECT *
+        FROM users
+        WHERE email=?
+        """,
+        (email,),
     ).fetchone()
 
     if not user:
+
         raise HTTPException(
             status_code=401,
-            detail="invalid credentials"
+            detail="invalid credentials",
         )
 
     if not verify_password(
         password,
-        user["password_hash"]
+        user["password_hash"],
     ):
+
         raise HTTPException(
             status_code=401,
-            detail="invalid credentials"
+            detail="invalid credentials",
         )
 
     return {
@@ -119,6 +176,7 @@ def login(email: str, password: str):
 
 @app.get("/api/profile")
 def profile():
+
     return CANDIDATE.model_dump()
 
 
@@ -130,6 +188,8 @@ def sync_jobs(items):
 
     c = conn()
 
+    items = normalize_jobs(items)
+
     added = 0
     updated = 0
 
@@ -137,7 +197,7 @@ def sync_jobs(items):
 
         match = score(
             job,
-            CANDIDATE
+            CANDIDATE,
         )
 
         values = (
@@ -156,7 +216,7 @@ def sync_jobs(items):
             match["decision"],
             json.dumps(
                 match["matched_skills"]
-            )
+            ),
         )
 
         old = c.execute(
@@ -165,7 +225,9 @@ def sync_jobs(items):
             FROM jobs
             WHERE external_id=?
             """,
-            (job["external_id"],)
+            (
+                job["external_id"],
+            ),
         ).fetchone()
 
         c.execute(
@@ -192,6 +254,7 @@ def sync_jobs(items):
 
             ON CONFLICT(external_id)
             DO UPDATE SET
+                source=excluded.source,
                 title=excluded.title,
                 company=excluded.company,
                 country=excluded.country,
@@ -205,7 +268,7 @@ def sync_jobs(items):
                 decision=excluded.decision,
                 matched_skills=excluded.matched_skills
             """,
-            values
+            values,
         )
 
         if old:
@@ -218,7 +281,7 @@ def sync_jobs(items):
     return {
         "added": added,
         "updated": updated,
-        "total": len(items)
+        "total": len(items),
     }
 
 
@@ -226,11 +289,18 @@ def sync_jobs(items):
 # GREENHOUSE SOURCE
 # ============================================================
 
-@app.post("/api/sources/greenhouse/{board_token}")
-def sync_greenhouse(board_token: str):
+@app.post(
+    "/api/sources/greenhouse/{board_token}"
+)
+def sync_greenhouse(
+    board_token: str,
+):
 
     try:
-        jobs = greenhouse(board_token)
+
+        jobs = greenhouse(
+            board_token
+        )
 
         return sync_jobs(jobs)
 
@@ -238,7 +308,7 @@ def sync_greenhouse(board_token: str):
 
         raise HTTPException(
             status_code=500,
-            detail=str(e)
+            detail=str(e),
         )
 
 
@@ -246,16 +316,19 @@ def sync_greenhouse(board_token: str):
 # LEVER SOURCE
 # ============================================================
 
-@app.post("/api/sources/lever/{site}")
+@app.post(
+    "/api/sources/lever/{site}"
+)
 def sync_lever(
     site: str,
-    eu: bool = False
+    eu: bool = False,
 ):
 
     try:
+
         jobs = lever(
             site,
-            eu
+            eu,
         )
 
         return sync_jobs(jobs)
@@ -264,32 +337,78 @@ def sync_lever(
 
         raise HTTPException(
             status_code=500,
-            detail=str(e)
+            detail=str(e),
         )
 
 
 # ============================================================
-# AUTOMATIC CRON SYNC
+# PUBLIC JOB SOURCE
+# ============================================================
+
+@app.post(
+    "/api/sources/public/{source}"
+)
+def sync_public_source(
+    source: str,
+):
+
+    source = source.lower().strip()
+
+    try:
+
+        if source == "arbeitnow":
+
+            jobs = arbeitnow()
+
+        elif source == "remoteok":
+
+            jobs = remoteok()
+
+        else:
+
+            raise HTTPException(
+                status_code=400,
+                detail="unsupported public source",
+            )
+
+        return sync_jobs(jobs)
+
+    except HTTPException:
+
+        raise
+
+    except Exception as e:
+
+        raise HTTPException(
+            status_code=500,
+            detail=str(e),
+        )
+
+
+# ============================================================
+# V11 AUTOMATIC MULTI-PORTAL SYNC
 # ============================================================
 
 @app.post("/api/cron/sync")
 def cron_sync(
-    x_cron_secret: str = Header(default="")
+    x_cron_secret: str = Header(
+        default=""
+    ),
 ):
 
     if x_cron_secret != CRON_SECRET:
 
         raise HTTPException(
             status_code=401,
-            detail="invalid cron secret"
+            detail="invalid cron secret",
         )
 
     results = []
 
 
-    # --------------------------------------------------------
-    # LEVER SOURCES
-    # --------------------------------------------------------
+    # ========================================================
+    # LEVER
+    # ========================================================
 
     for item in LEVER_SOURCES:
 
@@ -306,16 +425,18 @@ def cron_sync(
 
             jobs = lever(
                 site,
-                eu
+                eu,
             )
 
-            result = sync_jobs(jobs)
+            result = sync_jobs(
+                jobs
+            )
 
             results.append(
                 {
                     "source": "lever",
                     "site": site,
-                    "result": result
+                    "result": result,
                 }
             )
 
@@ -325,28 +446,32 @@ def cron_sync(
                 {
                     "source": "lever",
                     "site": site,
-                    "error": str(e)
+                    "error": str(e),
                 }
             )
 
 
-    # --------------------------------------------------------
-    # GREENHOUSE SOURCES
-    # --------------------------------------------------------
+    # ========================================================
+    # GREENHOUSE
+    # ========================================================
 
     for token in GREENHOUSE_SOURCES:
 
         try:
 
-            jobs = greenhouse(token)
+            jobs = greenhouse(
+                token
+            )
 
-            result = sync_jobs(jobs)
+            result = sync_jobs(
+                jobs
+            )
 
             results.append(
                 {
                     "source": "greenhouse",
                     "board": token,
-                    "result": result
+                    "result": result,
                 }
             )
 
@@ -356,34 +481,81 @@ def cron_sync(
                 {
                     "source": "greenhouse",
                     "board": token,
-                    "error": str(e)
+                    "error": str(e),
+                }
+            )
+
+
+    # ========================================================
+    # PUBLIC SOURCES
+    # ========================================================
+
+    for source in PUBLIC_JOB_SOURCES:
+
+        try:
+
+            if source == "arbeitnow":
+
+                jobs = arbeitnow()
+
+            elif source == "remoteok":
+
+                jobs = remoteok()
+
+            else:
+
+                results.append(
+                    {
+                        "source": source,
+                        "error": (
+                            "unsupported public source"
+                        ),
+                    }
+                )
+
+                continue
+
+            result = sync_jobs(
+                jobs
+            )
+
+            results.append(
+                {
+                    "source": source,
+                    "result": result,
+                }
+            )
+
+        except Exception as e:
+
+            results.append(
+                {
+                    "source": source,
+                    "error": str(e),
                 }
             )
 
 
     return {
         "sources_checked": len(results),
-        "results": results
+        "results": results,
     }
 
 
 # ============================================================
-# RANKED JOBS
+# RANKED SPONSORED JOBS
 # ============================================================
 
 @app.get("/api/jobs")
 def jobs(
     min_score: int = 0,
-    country: str = ""
+    country: str = "",
 ):
 
     c = conn()
 
     # --------------------------------------------------------
-    # VISA SPONSORSHIP IS A HARD REQUIREMENT
-    #
-    # Only jobs with explicit sponsorship evidence are shown.
-    # UNKNOWN and NO sponsorship jobs are excluded.
+    # SPONSORSHIP IS A HARD REQUIREMENT
     # --------------------------------------------------------
 
     query = """
@@ -415,7 +587,7 @@ def jobs(
 
 
     # --------------------------------------------------------
-    # SORT BY BEST MATCH
+    # BEST MATCH FIRST
     # --------------------------------------------------------
 
     query += """
@@ -427,9 +599,63 @@ def jobs(
 
     rows = c.execute(
         query,
-        args
+        args,
     ).fetchall()
 
+    return [
+        dict(row)
+        for row in rows
+    ]
+
+
+# ============================================================
+# SPONSORSHIP VERIFICATION JOBS
+# ============================================================
+
+@app.get("/api/jobs/verification")
+def verification_jobs(
+    min_score: int = 0,
+    country: str = "",
+):
+
+    c = conn()
+
+    query = """
+        SELECT *
+        FROM jobs
+        WHERE match_score >= ?
+        AND visa_signal = 'UNKNOWN'
+        ORDER BY
+            match_score DESC,
+            updated_at DESC
+    """
+
+    args = [
+        min_score
+    ]
+
+    if country:
+
+        query = """
+            SELECT *
+            FROM jobs
+            WHERE match_score >= ?
+            AND visa_signal = 'UNKNOWN'
+            AND lower(country) LIKE ?
+            ORDER BY
+                match_score DESC,
+                updated_at DESC
+        """
+
+        args = [
+            min_score,
+            "%" + country.lower() + "%",
+        ]
+
+    rows = c.execute(
+        query,
+        args,
+    ).fetchall()
 
     return [
         dict(row)
@@ -443,7 +669,7 @@ def jobs(
 
 @app.post("/api/applications")
 def create_application(
-    x: ApplicationCreate
+    x: ApplicationCreate,
 ):
 
     c = conn()
@@ -454,21 +680,21 @@ def create_application(
         FROM jobs
         WHERE id=?
         """,
-        (x.job_id,)
+        (
+            x.job_id,
+        ),
     ).fetchone()
-
 
     if not job:
 
         raise HTTPException(
             status_code=404,
-            detail="job not found"
+            detail="job not found",
         )
 
 
     # --------------------------------------------------------
     # SAFETY CHECK
-    # Applications can only be created for sponsored jobs.
     # --------------------------------------------------------
 
     if job["visa_signal"] != "YES":
@@ -478,11 +704,15 @@ def create_application(
             detail=(
                 "Application blocked: "
                 "visa sponsorship is not confirmed."
-            )
+            ),
         )
 
 
-    now = datetime.datetime.utcnow().isoformat()
+    now = (
+        datetime.datetime
+        .utcnow()
+        .isoformat()
+    )
 
 
     c.execute(
@@ -500,16 +730,15 @@ def create_application(
             x.job_id,
             "READY_FOR_REVIEW",
             now,
-            now
-        )
+            now,
+        ),
     )
 
     c.commit()
 
-
     return {
         "status": "READY_FOR_REVIEW",
-        "approval_required": True
+        "approval_required": True,
     }
 
 
@@ -517,10 +746,12 @@ def create_application(
 # APPLICATION STATUS
 # ============================================================
 
-@app.patch("/api/applications/{app_id}")
+@app.patch(
+    "/api/applications/{app_id}"
+)
 def update_application(
     app_id: int,
-    x: StatusUpdate
+    x: StatusUpdate,
 ):
 
     allowed = {
@@ -529,15 +760,14 @@ def update_application(
         "SUBMITTED",
         "INTERVIEW",
         "REJECTED",
-        "WITHDRAWN"
+        "WITHDRAWN",
     }
-
 
     if x.status not in allowed:
 
         raise HTTPException(
             status_code=400,
-            detail="invalid status"
+            detail="invalid status",
         )
 
 
@@ -553,13 +783,14 @@ def update_application(
         """,
         (
             x.status,
-            datetime.datetime.utcnow().isoformat(),
-            app_id
-        )
+            datetime.datetime
+            .utcnow()
+            .isoformat(),
+            app_id,
+        ),
     )
 
     c.commit()
-
 
     return {
         "ok": True
@@ -592,7 +823,6 @@ def applications():
         """
     ).fetchall()
 
-
     return [
         dict(row)
         for row in rows
@@ -603,9 +833,11 @@ def applications():
 # TAILORED CV + COVER LETTER
 # ============================================================
 
-@app.post("/api/jobs/{job_id}/documents")
+@app.post(
+    "/api/jobs/{job_id}/documents"
+)
 def documents(
-    job_id: int
+    job_id: int,
 ):
 
     c = conn()
@@ -616,23 +848,23 @@ def documents(
         FROM jobs
         WHERE id=?
         """,
-        (job_id,)
+        (
+            job_id,
+        ),
     ).fetchone()
-
 
     if not row:
 
         raise HTTPException(
             status_code=404,
-            detail="job not found"
+            detail="job not found",
         )
-
 
     job = dict(row)
 
 
     # --------------------------------------------------------
-    # VISA CHECK
+    # SPONSORSHIP CHECK
     # --------------------------------------------------------
 
     if job.get("visa_signal") != "YES":
@@ -642,28 +874,27 @@ def documents(
             detail=(
                 "Documents blocked: "
                 "visa sponsorship is not confirmed."
-            )
+            ),
         )
 
 
     # --------------------------------------------------------
-    # GENERATE TAILORED CV
+    # TAILORED CV
     # --------------------------------------------------------
 
     result = generate_cv(
         CANDIDATE,
-        job
+        job,
     )
 
 
     # --------------------------------------------------------
-    # GENERATE COVER LETTER
+    # COVER LETTER
     # --------------------------------------------------------
 
     result["cover_letter"] = cover_letter(
         CANDIDATE,
-        job
+        job,
     )
-
 
     return result
