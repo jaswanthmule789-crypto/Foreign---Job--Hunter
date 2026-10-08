@@ -1,5 +1,5 @@
 from fastapi import FastAPI, HTTPException, Header
-from fastapi.responses import HTMLResponse, FileResponse
+from fastapi.responses import HTMLResponse
 
 from .models import Candidate, ApplicationCreate, StatusUpdate
 
@@ -43,7 +43,7 @@ import datetime
 
 app = FastAPI(
     title="Foreign Job Hunter AI",
-    version="V11 Multi-Portal",
+    version="V12 Sponsorship Discovery",
 )
 
 CANDIDATE = Candidate()
@@ -69,7 +69,7 @@ def home():
         </head>
         <body>
             <h1>🤖 Foreign Job Hunter AI</h1>
-            <p>V11 Multi-Portal Engine is running.</p>
+            <p>V12 Sponsorship Discovery Engine is running.</p>
         </body>
         </html>
         """
@@ -130,6 +130,10 @@ def register(
         "token": make_token(user["id"])
     }
 
+
+# ============================================================
+# LOGIN
+# ============================================================
 
 @app.post("/api/auth/login")
 def login(
@@ -217,6 +221,10 @@ def sync_jobs(items):
             json.dumps(
                 match["matched_skills"]
             ),
+            match.get(
+                "sponsorship_evidence",
+                "",
+            ),
         )
 
         old = c.execute(
@@ -247,10 +255,15 @@ def sync_jobs(items):
                 match_score,
                 visa_signal,
                 decision,
-                matched_skills
+                matched_skills,
+                sponsorship_evidence
             )
             VALUES
-            (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            (
+                ?, ?, ?, ?, ?,
+                ?, ?, ?, ?, ?,
+                ?, ?, ?, ?, ?
+            )
 
             ON CONFLICT(external_id)
             DO UPDATE SET
@@ -266,7 +279,9 @@ def sync_jobs(items):
                 match_score=excluded.match_score,
                 visa_signal=excluded.visa_signal,
                 decision=excluded.decision,
-                matched_skills=excluded.matched_skills
+                matched_skills=excluded.matched_skills,
+                sponsorship_evidence=
+                    excluded.sponsorship_evidence
             """,
             values,
         )
@@ -386,7 +401,7 @@ def sync_public_source(
 
 
 # ============================================================
-# V11 AUTOMATIC MULTI-PORTAL SYNC
+# V12 AUTOMATIC MULTI-PORTAL SYNC
 # ============================================================
 
 @app.post("/api/cron/sync")
@@ -537,13 +552,15 @@ def cron_sync(
 
 
     return {
+        "engine": "V12",
+        "sponsorship_engine": True,
         "sources_checked": len(results),
         "results": results,
     }
 
 
 # ============================================================
-# RANKED SPONSORED JOBS
+# CONFIRMED SPONSORED JOBS
 # ============================================================
 
 @app.get("/api/jobs")
@@ -553,10 +570,6 @@ def jobs(
 ):
 
     c = conn()
-
-    # --------------------------------------------------------
-    # SPONSORSHIP IS A HARD REQUIREMENT
-    # --------------------------------------------------------
 
     query = """
         SELECT *
@@ -570,10 +583,56 @@ def jobs(
         min_score
     ]
 
+    if country:
 
-    # --------------------------------------------------------
-    # COUNTRY FILTER
-    # --------------------------------------------------------
+        query += """
+            AND lower(country) LIKE ?
+        """
+
+        args.append(
+            "%" + country.lower() + "%"
+        )
+
+    query += """
+        ORDER BY
+            match_score DESC,
+            updated_at DESC
+    """
+
+    rows = c.execute(
+        query,
+        args,
+    ).fetchall()
+
+    return [
+        dict(row)
+        for row in rows
+    ]
+
+
+# ============================================================
+# LIKELY SPONSORSHIP JOBS
+# ============================================================
+
+@app.get("/api/jobs/likely")
+def likely_jobs(
+    min_score: int = 0,
+    country: str = "",
+):
+
+    c = conn()
+
+    query = """
+        SELECT *
+        FROM jobs
+        WHERE match_score >= ?
+        AND visa_signal = 'LIKELY'
+        AND decision = 'REVIEW'
+    """
+
+    args = [
+        min_score
+    ]
 
     if country:
 
@@ -585,17 +644,11 @@ def jobs(
             "%" + country.lower() + "%"
         )
 
-
-    # --------------------------------------------------------
-    # BEST MATCH FIRST
-    # --------------------------------------------------------
-
     query += """
         ORDER BY
             match_score DESC,
             updated_at DESC
     """
-
 
     rows = c.execute(
         query,
@@ -625,9 +678,6 @@ def verification_jobs(
         FROM jobs
         WHERE match_score >= ?
         AND visa_signal = 'UNKNOWN'
-        ORDER BY
-            match_score DESC,
-            updated_at DESC
     """
 
     args = [
@@ -636,21 +686,19 @@ def verification_jobs(
 
     if country:
 
-        query = """
-            SELECT *
-            FROM jobs
-            WHERE match_score >= ?
-            AND visa_signal = 'UNKNOWN'
+        query += """
             AND lower(country) LIKE ?
-            ORDER BY
-                match_score DESC,
-                updated_at DESC
         """
 
-        args = [
-            min_score,
-            "%" + country.lower() + "%",
-        ]
+        args.append(
+            "%" + country.lower() + "%"
+        )
+
+    query += """
+        ORDER BY
+            match_score DESC,
+            updated_at DESC
+    """
 
     rows = c.execute(
         query,
@@ -661,6 +709,63 @@ def verification_jobs(
         dict(row)
         for row in rows
     ]
+
+
+# ============================================================
+# SPONSORSHIP STATUS SUMMARY
+# ============================================================
+
+@app.get("/api/jobs/summary")
+def jobs_summary():
+
+    c = conn()
+
+    total = c.execute(
+        """
+        SELECT COUNT(*) AS count
+        FROM jobs
+        """
+    ).fetchone()["count"]
+
+    confirmed = c.execute(
+        """
+        SELECT COUNT(*) AS count
+        FROM jobs
+        WHERE visa_signal='YES'
+        """
+    ).fetchone()["count"]
+
+    likely = c.execute(
+        """
+        SELECT COUNT(*) AS count
+        FROM jobs
+        WHERE visa_signal='LIKELY'
+        """
+    ).fetchone()["count"]
+
+    unknown = c.execute(
+        """
+        SELECT COUNT(*) AS count
+        FROM jobs
+        WHERE visa_signal='UNKNOWN'
+        """
+    ).fetchone()["count"]
+
+    no_sponsorship = c.execute(
+        """
+        SELECT COUNT(*) AS count
+        FROM jobs
+        WHERE visa_signal='NO'
+        """
+    ).fetchone()["count"]
+
+    return {
+        "total": total,
+        "confirmed": confirmed,
+        "likely": likely,
+        "unknown": unknown,
+        "no_sponsorship": no_sponsorship,
+    }
 
 
 # ============================================================
@@ -694,7 +799,7 @@ def create_application(
 
 
     # --------------------------------------------------------
-    # SAFETY CHECK
+    # HARD SPONSORSHIP SAFETY CHECK
     # --------------------------------------------------------
 
     if job["visa_signal"] != "YES":
@@ -713,7 +818,6 @@ def create_application(
         .utcnow()
         .isoformat()
     )
-
 
     c.execute(
         """
@@ -815,7 +919,8 @@ def applications():
             j.country,
             j.url,
             j.match_score,
-            j.visa_signal
+            j.visa_signal,
+            j.sponsorship_evidence
         FROM applications a
         JOIN jobs j
             ON j.id = a.job_id
@@ -864,7 +969,7 @@ def documents(
 
 
     # --------------------------------------------------------
-    # SPONSORSHIP CHECK
+    # HARD SPONSORSHIP CHECK
     # --------------------------------------------------------
 
     if job.get("visa_signal") != "YES":
