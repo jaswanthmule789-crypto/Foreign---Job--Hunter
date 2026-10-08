@@ -96,8 +96,30 @@ def cron_sync(x_cron_secret: str = Header(default="")):
     }
 
 @app.get("/api/jobs")
-def jobs(min_score:int=0,country:str=""):
-    c=conn(); q="SELECT * FROM jobs WHERE match_score>=?"; args=[min_score]
+def jobs(min_score: int = 0, country: str = ""):
+    c = conn()
+
+    q = """
+        SELECT *
+        FROM jobs
+        WHERE match_score >= ?
+        AND visa_signal = 'YES'
+    """
+
+    args = [min_score]
+
+    if country:
+        q += " AND lower(country) LIKE ?"
+        args.append("%" + country.lower() + "%")
+
+    q += """
+        ORDER BY match_score DESC, updated_at DESC
+    """
+
+    return [
+        dict(x)
+        for x in c.execute(q, args).fetchall()
+    ]
     if country: q+=" AND lower(country) LIKE ?"; args.append("%"+country.lower()+"%")
     q+=" ORDER BY match_score DESC,updated_at DESC"
     return [dict(x) for x in c.execute(q,args).fetchall()]
